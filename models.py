@@ -120,10 +120,10 @@ class TransformerClassifier(nn.Module):
     def __init__(
         self,
         vocab_size: int,
-        d_model: int = 256,
+        d_model: int = 512,
         nhead: int = 8,
-        num_layers: int = 4,
-        dim_feedforward: int = 1024,
+        num_layers: int = 6,
+        dim_feedforward: int = 2048,
         max_len: int = 256,
         dropout: float = 0.1
     ):
@@ -132,7 +132,7 @@ class TransformerClassifier(nn.Module):
 
         Args:
             vocab_size: Size of vocabulary (from vocab.json)
-            d_model: Model dimension (tunable HP: 128, 256; must be divisible by nhead)
+            d_model: Model dimension (tunable HP: 128, 256, 512; must be divisible by nhead)
             nhead: Number of attention heads (tunable HP: 2, 4, 8)
             num_layers: Number of encoder layers (tunable HP: 2, 4, 6)
             dim_feedforward: Feedforward dimension (tunable HP: 512, 1024, 2048)

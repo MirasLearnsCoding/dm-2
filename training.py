@@ -6,6 +6,7 @@ Supports both LSTM and Transformer models with early stopping.
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torch.optim.lr_scheduler import OneCycleLR
 from torch.utils.data import DataLoader
 from sklearn.metrics import f1_score
 from typing import Dict, Tuple
@@ -51,7 +52,20 @@ def train_model(
 
     # Loss function and optimizer
     criterion = nn.BCEWithLogitsLoss()
-    optimizer = optim.Adam(model.parameters(), lr=0.001)
+    # Use tiny LR for scheduler to override
+    optimizer = optim.Adam(model.parameters(), lr=1e-7)
+
+    # Add scheduler ONLY for Transformer
+    scheduler = None
+    if model_type == "transformer":
+        scheduler = OneCycleLR(
+            optimizer,
+            max_lr=5e-4,  # Peak learning rate
+            steps_per_epoch=len(train_loader),
+            epochs=num_epochs,
+            pct_start=0.1,  # 10% warmup phase
+            anneal_strategy='cos'
+        )
 
     # History tracking
     history = {
@@ -100,6 +114,10 @@ def train_model(
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+
+            # Update learning rate AFTER each batch (for Transformer)
+            if scheduler is not None:
+                scheduler.step()
 
             # Accumulate metrics
             train_loss += loss.item()
