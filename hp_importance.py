@@ -22,10 +22,10 @@ LSTM_DEFAULTS = {
 }
 
 TRANSFORMER_DEFAULTS = {
-    "d_model": 512,
+    "d_model": 256,
     "nhead": 8,
-    "num_layers": 6,
-    "dim_feedforward": 2048,
+    "num_layers": 4,
+    "dim_feedforward": 1024,
     "dropout": 0.1
 }
 

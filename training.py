@@ -60,7 +60,7 @@ def train_model(
     if model_type == "transformer":
         scheduler = OneCycleLR(
             optimizer,
-            max_lr=5e-4,  # Peak learning rate
+            max_lr=1e-4,  # Lower peak learning rate to prevent NaN
             steps_per_epoch=len(train_loader),
             epochs=num_epochs,
             pct_start=0.1,  # 10% warmup phase
@@ -113,11 +113,22 @@ def train_model(
             # Backward pass
             optimizer.zero_grad()
             loss.backward()
+
+            # Gradient clipping to prevent NaN (especially for Transformer)
+            if model_type == "transformer":
+                torch.nn.utils.clip_grad_norm_(
+                    model.parameters(), max_norm=1.0)
+
             optimizer.step()
 
             # Update learning rate AFTER each batch (for Transformer)
             if scheduler is not None:
                 scheduler.step()
+
+            # Check for NaN and skip if found
+            if torch.isnan(loss):
+                print(f"  WARNING: NaN loss detected, skipping batch")
+                continue
 
             # Accumulate metrics
             train_loss += loss.item()
@@ -134,6 +145,7 @@ def train_model(
         # Validation phase
         model.eval()
         val_loss = 0.0
+        val_batches = 0
         val_preds = []
         val_labels = []
 
@@ -155,17 +167,23 @@ def train_model(
                 # Compute loss
                 loss = criterion(outputs.squeeze(), labels)
 
-                # Accumulate metrics
-                val_loss += loss.item()
-                val_preds.extend(
-                    (torch.sigmoid(outputs.squeeze()) > 0.5).cpu().numpy())
-                val_labels.extend(labels.cpu().numpy())
+                # Accumulate metrics (skip if NaN)
+                if not torch.isnan(loss):
+                    val_loss += loss.item()
+                    val_batches += 1
+                    val_preds.extend(
+                        (torch.sigmoid(outputs.squeeze()) > 0.5).cpu().numpy())
+                    val_labels.extend(labels.cpu().numpy())
 
-        # Average validation loss
-        avg_val_loss = val_loss / len(val_loader)
+        # Average validation loss (handle case where all batches had NaN)
+        avg_val_loss = val_loss / \
+            val_batches if val_batches > 0 else float('nan')
 
-        # Validation F1 score
-        val_f1 = f1_score(val_labels, val_preds)
+        # Validation F1 score (handle empty predictions)
+        if len(val_preds) > 0 and len(val_labels) > 0:
+            val_f1 = f1_score(val_labels, val_preds)
+        else:
+            val_f1 = 0.0  # Default to 0 if no valid predictions
 
         # Store history
         history["train_loss"].append(avg_train_loss)

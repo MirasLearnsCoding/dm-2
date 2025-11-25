@@ -120,10 +120,10 @@ class TransformerClassifier(nn.Module):
     def __init__(
         self,
         vocab_size: int,
-        d_model: int = 512,
+        d_model: int = 256,
         nhead: int = 8,
-        num_layers: int = 6,
-        dim_feedforward: int = 2048,
+        num_layers: int = 4,
+        dim_feedforward: int = 1024,
         max_len: int = 256,
         dropout: float = 0.1
     ):
@@ -202,11 +202,9 @@ class TransformerClassifier(nn.Module):
         Returns:
             Logits [batch_size, 1] (raw logits, no sigmoid)
         """
-        # 1. Embed tokens and scale by sqrt(d_model)
-        x = self.embedding(input_ids) * torch.sqrt(
-            torch.tensor(self.d_model, dtype=torch.float32,
-                         device=input_ids.device)
-        )  # [B, L, d_model]
+        # 1. Embed tokens (minimal scaling to prevent NaN)
+        # No scaling - let the model learn naturally
+        x = self.embedding(input_ids)
 
         # 2. Add positional encoding (truncate to input length)
         seq_len = x.size(1)
