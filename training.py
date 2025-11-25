@@ -62,8 +62,10 @@ def train_model(
     }
 
     # Early stopping variables
-    best_f1 = 0.0
-    best_model_state = None
+    # Initialize best_f1 to -1.0 so first epoch always saves model
+    best_f1 = -1.0
+    # Initialize best_model_state to current model state
+    best_model_state = copy.deepcopy(model.state_dict())
     epochs_no_improve = 0
 
     print(f"Starting training for {model_type.upper()} model...")
@@ -178,11 +180,11 @@ def train_model(
         print()
 
     # If training completed without early stopping, restore best model
+    # (If early stopping triggered, we already restored in the loop)
     if epochs_no_improve < patience:
-        if best_model_state is not None:
-            print(
-                f"Training completed. Restoring best model with validation F1: {best_f1:.4f}")
-            model.load_state_dict(best_model_state)
+        print(
+            f"Training completed. Restoring best model with validation F1: {best_f1:.4f}")
+        model.load_state_dict(best_model_state)
 
     return history
 
