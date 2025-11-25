@@ -8,6 +8,8 @@ using LSTM models with advanced text cleaning to prevent data leakage.
 import pandas as pd
 import numpy as np
 import re
+import pickle
+import json
 from sklearn.model_selection import train_test_split
 from tensorflow.keras.preprocessing.text import Tokenizer
 from tensorflow.keras.preprocessing.sequence import pad_sequences
@@ -143,6 +145,7 @@ def preprocess_data(df, vocab_size=10000, max_length=256, oov_token="<OOV>"):
         X: Padded sequences
         y: Labels
         tokenizer: Fitted tokenizer object
+        df: DataFrame with cleaned_text column
     """
     print("\nPreprocessing text data...")
 
@@ -150,19 +153,23 @@ def preprocess_data(df, vocab_size=10000, max_length=256, oov_token="<OOV>"):
     print("Cleaning texts...")
     df['cleaned_text'] = df['combined_text'].apply(clean_text)
 
+    # Store custom_filter for saving config later
+    default_filter = '!"#$%&()*+,-./:;<=>?@[\\]^_`{|}~\t\n'
+    custom_filter = default_filter.replace('!', '').replace('?', '')
+
     # Check for empty texts after cleaning
-    empty_count = (df['cleaned_text'].str.len() == 0).sum()
+    empty_mask = df['cleaned_text'].str.len() == 0
+    empty_count = empty_mask.sum()
     if empty_count > 0:
         print(
-            f"Warning: {empty_count} texts became empty after cleaning. They will be padded with zeros.")
+            f"Warning: {empty_count} texts became empty after cleaning.")
+        # Optionally filter them out or keep them (they'll be all zeros after padding)
+        # For now, we'll keep them but warn the user
 
     # Initialize tokenizer with custom filters
     # Default Keras Tokenizer filters remove: '!"#$%&()*+,-./:;<=>?@[\\]^_`{|}~\t\n'
     # We want to KEEP '!' and '?' so we exclude them from filters
     # This allows the model to use excessive punctuation as features (important for fake news detection)
-    default_filter = '!"#$%&()*+,-./:;<=>?@[\\]^_`{|}~\t\n'
-    # Remove ! and ? from the filter list to preserve them in the vocabulary
-    custom_filter = default_filter.replace('!', '').replace('?', '')
 
     tokenizer = Tokenizer(
         num_words=vocab_size,
@@ -187,12 +194,25 @@ def preprocess_data(df, vocab_size=10000, max_length=256, oov_token="<OOV>"):
         truncating='post'
     )
 
-    # Extract labels
-    y = df['label'].values
+    # Extract labels and ensure proper data types for TensorFlow
+    y = df['label'].values.astype(np.int32)
 
-    print(f"Vocabulary size: {len(tokenizer.word_index)}")
-    print(f"X shape: {X.shape}")
-    print(f"y shape: {y.shape}")
+    # Convert X to float32 for TensorFlow (though it's already int, this ensures consistency)
+    X = X.astype(np.int32)
+
+    # Calculate sequence length statistics before padding
+    seq_lengths = [len(seq) for seq in sequences]
+    print(f"\nSequence length statistics (before padding):")
+    print(f"  Min: {min(seq_lengths)}")
+    print(f"  Max: {max(seq_lengths)}")
+    print(f"  Mean: {np.mean(seq_lengths):.1f}")
+    print(f"  Median: {np.median(seq_lengths):.1f}")
+    print(
+        f"  Percentiles - 75th: {np.percentile(seq_lengths, 75):.1f}, 90th: {np.percentile(seq_lengths, 90):.1f}, 95th: {np.percentile(seq_lengths, 95):.1f}")
+
+    print(f"\nVocabulary size: {len(tokenizer.word_index)}")
+    print(f"X shape: {X.shape} (dtype: {X.dtype})")
+    print(f"y shape: {y.shape} (dtype: {y.dtype})")
 
     return X, y, tokenizer, df
 
@@ -204,20 +224,34 @@ def main():
     df = load_and_merge_data('Fake.csv', 'True.csv')
 
     # Step 2: Preprocess (clean, tokenize, pad)
+    vocab_size = 10000
+    max_length = 256
+    oov_token = "<OOV>"
+
     X, y, tokenizer, df = preprocess_data(
         df,
-        vocab_size=10000,
-        max_length=256,
-        oov_token="<OOV>"
+        vocab_size=vocab_size,
+        max_length=max_length,
+        oov_token=oov_token
     )
 
-    # Step 3: Train/Test split (80/20)
-    print("\nPerforming train/test split (80/20)...")
-    X_train, X_test, y_train, y_test = train_test_split(
+    # Step 3: Train/Validation/Test split (80/10/10)
+    print("\nPerforming train/validation/test split (80/10/10)...")
+
+    # First split: 80% train, 20% temp (which will become validation + test)
+    X_train, X_temp, y_train, y_temp = train_test_split(
         X, y,
         test_size=0.2,
         random_state=42,
         stratify=y  # Maintain class distribution
+    )
+
+    # Second split: Split temp 50/50 to get 10% validation and 10% test
+    X_val, X_test, y_val, y_test = train_test_split(
+        X_temp, y_temp,
+        test_size=0.5,
+        random_state=42,
+        stratify=y_temp  # Maintain class distribution
     )
 
     # Step 4: Output shapes
@@ -225,13 +259,17 @@ def main():
     print("FINAL DATA SHAPES")
     print("="*60)
     print(f"X_train shape: {X_train.shape}")
-    print(f"X_test shape: {X_test.shape}")
+    print(f"X_val shape:   {X_val.shape}")
+    print(f"X_test shape:  {X_test.shape}")
     print(f"y_train shape: {y_train.shape}")
-    print(f"y_test shape: {y_test.shape}")
+    print(f"y_val shape:   {y_val.shape}")
+    print(f"y_test shape:  {y_test.shape}")
     print(
-        f"\nTraining set - Fake news: {y_train.sum()}, True news: {(y_train == 0).sum()}")
+        f"\nTraining set   - Fake news: {y_train.sum()}, True news: {(y_train == 0).sum()}")
     print(
-        f"Test set - Fake news: {y_test.sum()}, True news: {(y_test == 0).sum()}")
+        f"Validation set - Fake news: {y_val.sum()}, True news: {(y_val == 0).sum()}")
+    print(
+        f"Test set       - Fake news: {y_test.sum()}, True news: {(y_test == 0).sum()}")
 
     # Step 5: Print sample comparisons
     print("\n" + "="*60)
@@ -261,17 +299,68 @@ def main():
             print(f"Cleaned:  {clean_display}")
             print("-" * 60)
 
-    # Save preprocessed data (optional)
+    # Step 6: Save preprocessed data and tokenizer
+    print("\n" + "="*60)
+    print("Saving preprocessed data and tokenizer...")
+    print("="*60)
+
+    try:
+        # Get custom_filter for config (recreate it)
+        default_filter = '!"#$%&()*+,-./:;<=>?@[\\]^_`{|}~\t\n'
+        custom_filter = default_filter.replace('!', '').replace('?', '')
+
+        # Save tokenizer (CRITICAL for inference)
+        tokenizer_path = 'tokenizer.pkl'
+        with open(tokenizer_path, 'wb') as f:
+            pickle.dump(tokenizer, f)
+        print(f"✓ Tokenizer saved to: {tokenizer_path}")
+
+        # Save tokenizer config as JSON for reference
+        tokenizer_config = {
+            'vocab_size': vocab_size,
+            'max_length': max_length,
+            'oov_token': oov_token,
+            'word_index_size': len(tokenizer.word_index),
+            'filters': custom_filter
+        }
+        with open('tokenizer_config.json', 'w') as f:
+            json.dump(tokenizer_config, f, indent=2)
+        print(f"✓ Tokenizer config saved to: tokenizer_config.json")
+
+        # Save preprocessed arrays (optional but useful to avoid reprocessing)
+        np.savez_compressed(
+            'preprocessed_data.npz',
+            X_train=X_train,
+            X_val=X_val,
+            X_test=X_test,
+            y_train=y_train,
+            y_val=y_val,
+            y_test=y_test
+        )
+        print(f"✓ Preprocessed arrays saved to: preprocessed_data.npz")
+        print("  (You can load with: data = np.load('preprocessed_data.npz'))")
+    except Exception as e:
+        print(f"⚠ Warning: Error saving files: {e}")
+        print("  Data is still available in memory, but files were not saved.")
+
     print("\n" + "="*60)
     print("Preprocessing complete!")
     print("="*60)
     print("\nTo use the preprocessed data in your model:")
-    print("  - X_train, X_test: Input sequences")
-    print("  - y_train, y_test: Labels")
+    print("  - X_train, X_val, X_test: Input sequences")
+    print("  - y_train, y_val, y_test: Labels")
     print("  - tokenizer: Tokenizer object for future text preprocessing")
+    print("\nUsage:")
+    print("  - Training set: Used to train the model")
+    print("  - Validation set: Used for hyperparameter tuning and early stopping")
+    print("  - Test set: Used ONLY for final evaluation (do not use for tuning)")
+    print("\nSaved files:")
+    print("  - tokenizer.pkl: Load with pickle for preprocessing new texts")
+    print("  - tokenizer_config.json: Tokenizer hyperparameters")
+    print("  - preprocessed_data.npz: All preprocessed arrays (optional reload)")
 
-    return X_train, X_test, y_train, y_test, tokenizer
+    return X_train, X_val, X_test, y_train, y_val, y_test, tokenizer
 
 
 if __name__ == "__main__":
-    X_train, X_test, y_train, y_test, tokenizer = main()
+    X_train, X_val, X_test, y_train, y_val, y_test, tokenizer = main()
